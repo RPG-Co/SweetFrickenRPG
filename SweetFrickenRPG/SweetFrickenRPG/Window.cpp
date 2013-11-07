@@ -1,295 +1,333 @@
-////////////////////////////////////////////////////////////////////////////////
-// Filename: Window.cpp
-////////////////////////////////////////////////////////////////////////////////
 #include "Window.h"
 
+// Window constructor
 Window::Window()
-	: m_Input(0), m_Graphics(0)
+	: m_hwnd(NULL), m_pDirect2dFactory(NULL), m_pRenderTarget(NULL),
+      m_pLightSlateGrayBrush(NULL), m_pCornflowerBlueBrush(NULL)
 {
 }
 
-Window::Window(const Window& other)
-	: m_Input(0), m_Graphics(0)
-{
-}
-
+// Window destructor
+// Releases the application's resources.
 Window::~Window()
 {
-	m_Input = 0;
-	m_Graphics = 0;
+    SafeRelease(&m_pDirect2dFactory);
+    SafeRelease(&m_pRenderTarget);
+    SafeRelease(&m_pLightSlateGrayBrush);
+    SafeRelease(&m_pCornflowerBlueBrush);
+
 }
 
-bool Window::Initialize()
+// Creates the application window and device-independent
+// resources.
+HRESULT Window::Initialize()
 {
-	int screenWidth, screenHeight;
-	bool result;
+    HRESULT hr;
+
+    // Initialize device-indpendent resources, such
+    // as the Direct2D factory.
+    hr = CreateDeviceIndependentResources();
+
+    if (SUCCEEDED(hr))
+    {
+        // Register the window class.
+        WNDCLASSEX wcex = { sizeof(WNDCLASSEX) };
+        wcex.style         = CS_HREDRAW | CS_VREDRAW;
+        wcex.lpfnWndProc   = Window::WndProc;
+        wcex.cbClsExtra    = 0;
+        wcex.cbWndExtra    = sizeof(LONG_PTR);
+        wcex.hInstance     = HINST_THISCOMPONENT;
+        wcex.hbrBackground = NULL;
+        wcex.lpszMenuName  = NULL;
+        wcex.hCursor       = LoadCursor(NULL, IDI_APPLICATION);
+        wcex.lpszClassName = "D2DWindow";
+
+        RegisterClassEx(&wcex);
 
 
-	// Initialize the width and height of the screen to zero before sending the variables into the function.
-	screenWidth = 0;
-	screenHeight = 0;
+        // Because the CreateWindow function takes its size in pixels,
+        // obtain the system DPI and use it to scale the window size.
+        FLOAT dpiX, dpiY;
 
-	// Initialize the windows api.
-	InitializeWindows(screenWidth, screenHeight);
+        // The factory returns the current system DPI. This is also the value it will use
+        // to create its own windows.
+        m_pDirect2dFactory->GetDesktopDpi(&dpiX, &dpiY);
 
-	// Create the input object.  This object will be used to handle reading the keyboard input from the user.
-	m_Input = new Input;
-	if(!m_Input)
-	{
-		return false;
-	}
 
-	// Initialize the input object.
-	m_Input->Initialize();
+        // Create the window.
+        m_hwnd = CreateWindow(
+            "D2DWindow",
+            "Direct2D Demo App",
+            WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT,
+            CW_USEDEFAULT,
+            static_cast<UINT>(ceil(640.0f * dpiX / 96.0f)),
+            static_cast<UINT>(ceil(480.0f * dpiY / 96.0f)),
+            NULL,
+            NULL,
+            HINST_THISCOMPONENT,
+            this
+            );
+        hr = m_hwnd ? S_OK : E_FAIL;
+        if (SUCCEEDED(hr))
+        {
+            ShowWindow(m_hwnd, SW_SHOWNORMAL);
+            UpdateWindow(m_hwnd);
+        }
+    }
 
-	// Create the graphics object.  This object will handle rendering all the graphics for this application.
-	m_Graphics = new Graphics;
-	if(!m_Graphics)
-	{
-		return false;
-	}
-
-	// Initialize the graphics object.
-	result = m_Graphics->Initialize(screenWidth, screenHeight, m_hwnd);
-	if(!result)
-	{
-		return false;
-	}
-	
-	return true;
+    return hr;
 }
 
-void Window::Shutdown()
+// Creates resources that are not bound to a particular device.
+// Their lifetime effectively extends for the duration of the
+// application.
+HRESULT Window::CreateDeviceIndependentResources()
 {
-	// Release the graphics object.
-	if(m_Graphics)
-	{
-		m_Graphics->Shutdown();
-		delete m_Graphics;
-		m_Graphics = 0;
-	}
+    HRESULT hr = S_OK;
 
-	// Release the input object.
-	if(m_Input)
-	{
-		delete m_Input;
-		m_Input = 0;
-	}
+    // Create a Direct2D factory.
+    hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &m_pDirect2dFactory);
 
-	// Shutdown the window.
-	ShutdownWindows();
+    return hr;
 }
 
-void Window::Run()
+
+// Creates resources that are bound to a particular
+// Direct3D device. These resources need to be recreated
+// if the Direct3D device dissapears, such as when the display
+// changes, the window is remoted, etc.
+HRESULT Window::CreateDeviceResources()
 {
-	MSG msg;
-	bool done, result;
+    HRESULT hr = S_OK;
+
+    if (!m_pRenderTarget)
+    {
+        RECT rc;
+        GetClientRect(m_hwnd, &rc);
+
+        D2D1_SIZE_U size = D2D1::SizeU(
+            rc.right - rc.left,
+            rc.bottom - rc.top
+            );
+
+        // Create a Direct2D render target.
+        hr = m_pDirect2dFactory->CreateHwndRenderTarget(
+            D2D1::RenderTargetProperties(),
+            D2D1::HwndRenderTargetProperties(m_hwnd, size),
+            &m_pRenderTarget
+            );
 
 
-	// Initialize the message structure.
-	ZeroMemory(&msg, sizeof(MSG));
-	
-	// Loop until there is a quit message from the window or the user.
-	done = false;
-	while(!done)
-	{
-		// Handle the windows messages.
-		if(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-		}
+        if (SUCCEEDED(hr))
+        {
+            // Create a gray brush.
+            hr = m_pRenderTarget->CreateSolidColorBrush(
+                D2D1::ColorF(D2D1::ColorF::LightSlateGray),
+                &m_pLightSlateGrayBrush
+                );
+        }
+        if (SUCCEEDED(hr))
+        {
+            // Create a blue brush.
+            hr = m_pRenderTarget->CreateSolidColorBrush(
+                D2D1::ColorF(D2D1::ColorF::CornflowerBlue),
+                &m_pCornflowerBlueBrush
+                );
+        }
+    }
 
-		// If windows signals to end the application then exit out.
-		if(msg.message == WM_QUIT)
-		{
-			done = true;
-		}
-		else
-		{
-			// Otherwise do the frame processing.
-			result = Frame();
-			if(!result)
-			{
-				done = true;
-			}
-		}
-
-	}
+    return hr;
 }
 
-bool Window::Frame()
+// Discards device-dependent resources. These resources must be
+// recreated when the Direct3D device is lost.
+void Window::DiscardDeviceResources()
 {
-	bool result;
-
-	// Check if the user pressed escape and wants to exit the application.
-	if(m_Input->IsKeyDown(VK_ESCAPE))
-	{
-		return false;
-	}
-
-	// Do the frame processing for the graphics object.
-	result = m_Graphics->Frame();
-	if(!result)
-	{
-		return false;
-	}
-
-	return true;
+    SafeRelease(&m_pRenderTarget);
+    SafeRelease(&m_pLightSlateGrayBrush);
+    SafeRelease(&m_pCornflowerBlueBrush);
 }
 
-LRESULT CALLBACK Window::MessageHandler(HWND hwnd, UINT umsg, WPARAM wparam, LPARAM lparam)
+// Runs the main window message loop.
+void Window::RunMessageLoop()
 {
-	switch(umsg)
-	{
-		// Check if a key has been pressed on the keyboard.
-		case WM_KEYDOWN:
-		{
-			// If a key is pressed send it to the input object so it can record that state.
-			m_Input->KeyDown((unsigned int)wparam);
-			return 0;
-		}
+    MSG msg;
 
-		// Check if a key has been released on the keyboard.
-		case WM_KEYUP:
-		{
-			// If a key is released then send it to the input object so it can unset the state for that key.
-			m_Input->KeyUp((unsigned int)wparam);
-			return 0;
-		}
-
-		// Any other messages send to the default message handler as our application won't make use of them.
-		default:
-		{
-			return DefWindowProc(hwnd, umsg, wparam, lparam);
-		}
-	}
+    while (GetMessage(&msg, NULL, 0, 0))
+    {
+        TranslateMessage(&msg);
+        DispatchMessage(&msg);
+    }
 }
 
-void Window::InitializeWindows(int& screenWidth, int& screenHeight)
+// This method discards device-specific
+// resources if the Direct3D device dissapears during execution and
+// recreates the resources the next time it's invoked.
+HRESULT Window::OnRender()
 {
-	WNDCLASSEX wc;
-	DEVMODE dmScreenSettings;
-	int posX, posY;
+    HRESULT hr = S_OK;
+
+    hr = CreateDeviceResources();
+
+    if (SUCCEEDED(hr))
+    {
+        m_pRenderTarget->BeginDraw();
+
+        m_pRenderTarget->SetTransform(D2D1::Matrix3x2F::Identity());
+
+        m_pRenderTarget->Clear(D2D1::ColorF(D2D1::ColorF::White));
+
+        D2D1_SIZE_F rtSize = m_pRenderTarget->GetSize();
+
+        // Draw a grid background.
+        int width = static_cast<int>(rtSize.width);
+        int height = static_cast<int>(rtSize.height);
+
+		// TODO - RH - Draw stuff here
+				for (int x = 0; x < width; x += 10)
+				{
+				    m_pRenderTarget->DrawLine(
+				        D2D1::Point2F(static_cast<FLOAT>(x), 0.0f),
+				        D2D1::Point2F(static_cast<FLOAT>(x), rtSize.height),
+				        m_pLightSlateGrayBrush,
+				        0.5f
+				        );
+				}
+
+				for (int y = 0; y < height; y += 10)
+				{
+				    m_pRenderTarget->DrawLine(
+				        D2D1::Point2F(0.0f, static_cast<FLOAT>(y)),
+				        D2D1::Point2F(rtSize.width, static_cast<FLOAT>(y)),
+				        m_pLightSlateGrayBrush,
+				        0.5f
+				        );
+				}
+
+				// Draw two rectangles.
+				D2D1_RECT_F rectangle1 = D2D1::RectF(
+				    rtSize.width/2 - 50.0f,
+				    rtSize.height/2 - 50.0f,
+				    rtSize.width/2 + 50.0f,
+				    rtSize.height/2 + 50.0f
+				    );
+
+				D2D1_RECT_F rectangle2 = D2D1::RectF(
+				    rtSize.width/2 - 100.0f,
+				    rtSize.height/2 - 100.0f,
+				    rtSize.width/2 + 100.0f,
+				    rtSize.height/2 + 100.0f
+				    );
 
 
-	// Get an external pointer to this object.
-	ApplicationHandle = this;
+				// Draw a filled rectangle.
+				m_pRenderTarget->FillRectangle(&rectangle1, m_pLightSlateGrayBrush);
 
-	// Get the instance of this application.
-	m_hinstance = GetModuleHandle(NULL);
+				// Draw the outline of a rectangle.
+				m_pRenderTarget->DrawRectangle(&rectangle2, m_pCornflowerBlueBrush);
 
-	// Give the application a name.
-	m_applicationName = "Engine";
+        hr = m_pRenderTarget->EndDraw();
+    }
 
-	// Setup the windows class with default settings.
-	wc.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
-	wc.lpfnWndProc = WndProc;
-	wc.cbClsExtra = 0;
-	wc.cbWndExtra = 0;
-	wc.hInstance = m_hinstance;
-	wc.hIcon = LoadIcon(NULL, IDI_WINLOGO);
-	wc.hIconSm = wc.hIcon;
-	wc.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
-	wc.lpszMenuName = NULL;
-	wc.lpszClassName = m_applicationName;
-	wc.cbSize = sizeof(WNDCLASSEX);
-	
-	// Register the window class.
-	RegisterClassEx(&wc);
+    if (hr == D2DERR_RECREATE_TARGET)
+    {
+        hr = S_OK;
+        DiscardDeviceResources();
+    }
 
-	// Determine the resolution of the clients desktop screen.
-	screenWidth  = GetSystemMetrics(SM_CXSCREEN);
-	screenHeight = GetSystemMetrics(SM_CYSCREEN);
-
-	// Setup the screen settings depending on whether it is running in full screen or in windowed mode.
-	if(FULL_SCREEN)
-	{
-		// If full screen set the screen to maximum size of the users desktop and 32bit.
-		memset(&dmScreenSettings, 0, sizeof(dmScreenSettings));
-		dmScreenSettings.dmSize       = sizeof(dmScreenSettings);
-		dmScreenSettings.dmPelsWidth  = (unsigned long)screenWidth;
-		dmScreenSettings.dmPelsHeight = (unsigned long)screenHeight;
-		dmScreenSettings.dmBitsPerPel = 32;			
-		dmScreenSettings.dmFields     = DM_BITSPERPEL | DM_PELSWIDTH | DM_PELSHEIGHT;
-
-		// Change the display settings to full screen.
-		ChangeDisplaySettings(&dmScreenSettings, CDS_FULLSCREEN);
-
-		// Set the position of the window to the top left corner.
-		posX = posY = 0;
-	}
-	else
-	{
-		// If windowed then set it to 800x600 resolution.
-		screenWidth  = 800;
-		screenHeight = 600;
-
-		// Place the window in the middle of the screen.
-		posX = (GetSystemMetrics(SM_CXSCREEN) - screenWidth)  / 2;
-		posY = (GetSystemMetrics(SM_CYSCREEN) - screenHeight) / 2;
-	}
-
-	// Create the window with the screen settings and get the handle to it.
-	m_hwnd = CreateWindowEx(WS_EX_APPWINDOW, m_applicationName, m_applicationName, 
-				WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_POPUP,
-				posX, posY, screenWidth, screenHeight, NULL, NULL, m_hinstance, NULL);
-
-	// Bring the window up on the screen and set it as main focus.
-	ShowWindow(m_hwnd, SW_SHOW);
-	SetForegroundWindow(m_hwnd);
-	SetFocus(m_hwnd);
-
-	// Hide the mouse cursor.
-	ShowCursor(false);
+    return hr;
 }
 
-void Window::ShutdownWindows()
+
+//  If the application receives a WM_SIZE message, this method
+//  resizes the render target appropriately.
+void Window::OnResize(UINT width, UINT height)
 {
-	// Show the mouse cursor.
-	ShowCursor(true);
-
-	// Fix the display settings if leaving full screen mode.
-	if(FULL_SCREEN)
-	{
-		ChangeDisplaySettings(NULL, 0);
-	}
-
-	// Remove the window.
-	DestroyWindow(m_hwnd);
-	m_hwnd = NULL;
-
-	// Remove the application instance.
-	UnregisterClass(m_applicationName, m_hinstance);
-	m_hinstance = NULL;
-
-	// Release the pointer to this class.
-	ApplicationHandle = NULL;
+    if (m_pRenderTarget)
+    {
+        // Note: This method can fail, but it's okay to ignore the
+        // error here, because the error will be returned again
+        // the next time EndDraw is called.
+        m_pRenderTarget->Resize(D2D1::SizeU(width, height));
+    }
 }
 
-LRESULT CALLBACK WndProc(HWND hwnd, UINT umessage, WPARAM wparam, LPARAM lparam)
+// Handles window messages.
+LRESULT CALLBACK Window::WndProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
-	switch(umessage)
-	{
-		// Check if the window is being destroyed.
-		case WM_DESTROY:
-		{
-			PostQuitMessage(0);
-			return 0;
-		}
+    LRESULT result = 0;
 
-		// Check if the window is being closed.
-		case WM_CLOSE:
-		{
-			PostQuitMessage(0);		
-			return 0;
-		}
+    if (message == WM_CREATE)
+    {
+        LPCREATESTRUCT pcs = (LPCREATESTRUCT)lParam;
+        Window *pWindow = (Window *)pcs->lpCreateParams;
 
-		// All other messages pass to the message handler in the system class.
-		default:
-		{
-			return ApplicationHandle->MessageHandler(hwnd, umessage, wparam, lparam);
-		}
-	}
+        ::SetWindowLongPtrW(
+            hwnd,
+            GWLP_USERDATA,
+            PtrToUlong(pWindow)
+            );
+
+        result = 1;
+    }
+    else
+    {
+        Window *pWindow = reinterpret_cast<Window *>(static_cast<LONG_PTR>(
+            ::GetWindowLongPtrW(
+                hwnd,
+                GWLP_USERDATA
+                )));
+
+        bool wasHandled = false;
+
+        if (pWindow)
+        {
+            switch (message)
+            {
+            case WM_SIZE:
+                {
+                    UINT width = LOWORD(lParam);
+                    UINT height = HIWORD(lParam);
+                    pWindow->OnResize(width, height);
+                }
+                result = 0;
+                wasHandled = true;
+                break;
+
+            case WM_DISPLAYCHANGE:
+                {
+                    InvalidateRect(hwnd, NULL, FALSE);
+                }
+                result = 0;
+                wasHandled = true;
+                break;
+
+            case WM_PAINT:
+                {
+                    pWindow->OnRender();
+                    ValidateRect(hwnd, NULL);
+                }
+                result = 0;
+                wasHandled = true;
+                break;
+
+            case WM_DESTROY:
+                {
+                    PostQuitMessage(0);
+                }
+                result = 1;
+                wasHandled = true;
+                break;
+            }
+        }
+
+        if (!wasHandled)
+        {
+            result = DefWindowProc(hwnd, message, wParam, lParam);
+        }
+    }
+
+    return result;
 }
+

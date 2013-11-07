@@ -1,33 +1,27 @@
-////////////////////////////////////////////////////////////////////////////////
-// Filename: main.cpp
-////////////////////////////////////////////////////////////////////////////////
 #include "Window.h"
 
-
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PSTR pScmdline, int iCmdshow)
+// Provides the application entry point.
+int WINAPI WinMain( HINSTANCE hInstance, HINSTANCE  hPrevInstance, LPSTR lpCmdLine, int nCmdShow )
 {
-	Window* System;
-	bool result;
-	
-	
-	// Create the system object.
-	System = new Window;
-	if(!System)
-	{
-		return 0;
-	}
+    // Use HeapSetInformation to specify that the process should
+    // terminate if the heap manager detects an error in any heap used
+    // by the process.
+    // The return value is ignored, because we want to continue running in the
+    // unlikely event that HeapSetInformation fails.
+    HeapSetInformation(NULL, HeapEnableTerminationOnCorruption, NULL, 0);
 
-	// Initialize and run the system object.
-	result = System->Initialize();
-	if(result)
-	{
-		System->Run();
-	}
+    if (SUCCEEDED(CoInitialize(NULL)))
+    {
+        {
+            Window app;
 
-	// Shutdown and release the system object.
-	System->Shutdown();
-	delete System;
-	System = 0;
+            if (SUCCEEDED(app.Initialize()))
+            {
+                app.RunMessageLoop();
+            }
+        }
+        CoUninitialize();
+    }
 
-	return 0;
+    return 0;
 }
